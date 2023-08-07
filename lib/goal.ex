@@ -427,7 +427,7 @@ defmodule Goal do
   defmacro defparams(do: block) do
     quote do
       def schema do
-        unquote(block |> generate_schema() |> Macro.escape())
+        unquote(block |> generate_schema(__CALLER__) |> Macro.escape())
       end
     end
   end
@@ -457,7 +457,7 @@ defmodule Goal do
   defmacro defparams(name, do: block) do
     quote do
       def schema(unquote(name)) do
-        unquote(block |> generate_schema() |> Macro.escape())
+        unquote(block |> generate_schema(__CALLER__) |> Macro.escape())
       end
     end
   end
@@ -581,42 +581,51 @@ defmodule Goal do
         ) :: %{atom() => [term()]}
   defdelegate traverse_errors(changeset, msg_func), to: Goal.Changeset
 
-  defp generate_schema({:__block__, _lines, contents}) do
+  defp generate_schema({:__block__, _lines, contents}, caller) do
     Enum.reduce(contents, %{}, fn function, acc ->
-      Map.merge(acc, generate_schema(function))
+      Map.merge(acc, generate_schema(function, caller))
     end)
   end
 
-  defp generate_schema({:optional, _lines, [field]}) do
+  defp generate_schema({:optional, _lines, [field]}, _caller) do
     %{field => [{:type, :any}]}
   end
 
-  defp generate_schema({:optional, _lines, [field, type]}) do
+  defp generate_schema({:optional, _lines, [field, type]}, _caller) do
     %{field => [{:type, type}]}
   end
 
-  defp generate_schema({:optional, _lines, [field, type, options]}) do
+  defp generate_schema({:optional, _lines, [field, type, options]}, caller) do
     if block_or_function = Keyword.get(options, :do) do
-      properties = generate_schema(block_or_function)
+      properties = generate_schema(block_or_function, caller)
       clean_options = Keyword.delete(options, :do)
 
       %{field => [{:type, type} | [{:properties, properties} | clean_options]]}
     else
-      %{field => [{:type, type} | options]}
+      case Keyword.has_key?(options, :values) do
+        true ->
+          {name, meta, args} = Keyword.fetch!(options, :values)
+          meta = Keyword.put(meta, :module, caller.module)
+          options = Keyword.put(options, :values, {name, meta, args})
+          %{field => [{:type, type} | options]}
+
+        false ->
+          %{field => [{:type, type} | options]}
+      end
     end
   end
 
-  defp generate_schema({:required, _lines, [field]}) do
+  defp generate_schema({:required, _lines, [field]}, _caller) do
     %{field => [{:type, :any}, {:required, true}]}
   end
 
-  defp generate_schema({:required, _lines, [field, type]}) do
+  defp generate_schema({:required, _lines, [field, type]}, _caller) do
     %{field => [{:type, type}, {:required, true}]}
   end
 
-  defp generate_schema({:required, _lines, [field, type, options]}) do
+  defp generate_schema({:required, _lines, [field, type, options]}, caller) do
     if block_or_function = Keyword.get(options, :do) do
-      properties = generate_schema(block_or_function)
+      properties = generate_schema(block_or_function, caller)
       clean_options = Keyword.delete(options, :do)
 
       %{
@@ -625,7 +634,16 @@ defmodule Goal do
         ]
       }
     else
-      %{field => [{:type, type} | [{:required, true} | options]]}
+      case Keyword.has_key?(options, :values) do
+        true ->
+          {name, meta, args} = Keyword.fetch!(options, :values)
+          meta = Keyword.put(meta, :module, caller.module)
+          options = Keyword.put(options, :values, {name, meta, args})
+          %{field => [{:type, type} | [{:required, true} | options]]}
+
+        false ->
+          %{field => [{:type, type} | [{:required, true} | options]]}
+      end
     end
   end
 
@@ -636,6 +654,7 @@ defmodule Goal do
           values =
             rules
             |> Keyword.get(:values, [])
+            |> convert_values()
             |> Enum.map(&String.to_atom/1)
 
           Map.put(acc, field, {:parameterized, Ecto.Enum, Ecto.Enum.init(values: values)})
@@ -648,6 +667,12 @@ defmodule Goal do
       end
     end)
   end
+
+  defp convert_values({name, meta, args}) do
+    apply(meta[:module], name, args)
+  end
+
+  defp convert_values(values), do: values
 
   defp validate_required_fields(%Changeset{} = changeset, schema) do
     required_fields =

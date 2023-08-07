@@ -4,6 +4,10 @@ defmodule GoalTest do
 
   import Goal.Helpers
 
+  def genders do
+    ["female", "male", "non-binary"]
+  end
+
   defparams do
     required(:id, :integer)
   end
@@ -23,7 +27,7 @@ defmodule GoalTest do
     required(:name, :string, min: 3, max: 20)
     optional(:type, :string, squish: true)
     optional(:age, :integer, min: 0, max: 120)
-    optional(:gender, :enum, values: ["female", "male", "non-binary"])
+    optional(:gender, :enum, values: genders())
 
     required :car, :map do
       optional(:name, :string, min: 3, max: 20)
@@ -70,7 +74,7 @@ defmodule GoalTest do
                name: [type: :string, required: true, min: 3, max: 20],
                type: [type: :string, squish: true],
                age: [type: :integer, min: 0, max: 120],
-               gender: [type: :enum, values: ["female", "male", "non-binary"]],
+               gender: [type: :enum, values: {:genders, [module: GoalTest, line: 30], []}],
                car: [
                  type: :map,
                  required: true,
